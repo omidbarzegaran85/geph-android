@@ -1,5 +1,7 @@
 package io.geph.android;
 
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
 import android.app.job.JobParameters;
@@ -30,13 +32,27 @@ import org.json.JSONObject;
 public class UpdateJobService extends JobService {
     private static final String TAG = "UpdateJobService";
 
+    private String createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            String channelId = "geph_update";
+            String channelName = "Geph updates";
+            NotificationChannel chan = new NotificationChannel(channelId,
+                    channelName, NotificationManager.IMPORTANCE_HIGH);
+            chan.setDescription("Geph updates");
+            NotificationManager notificationManager = this.getSystemService(NotificationManager.class);
+            notificationManager.createNotificationChannel(chan);
+            return channelId;
+        }
+        return "";
+    }
+
     @Override
     public boolean onStartJob(JobParameters params) {
         final UpdateJobService currService = this;
         final JobParameters jparams = params;
         Log.d(TAG, "JOB STARTED");
         RequestQueue queue = Volley.newRequestQueue(this);
-        String url = "https://raw.githubusercontent.com/rensa-labs/geph-autoupdate/master/stable.json";
+        String url = "https://gitlab.com/bunsim/geph-autoupdate/raw/master/stable.json";
         JsonObjectRequest stringRequest = new JsonObjectRequest(
                 Request.Method.GET,
                 url, null, new Response.Listener<JSONObject>() {
@@ -45,7 +61,8 @@ public class UpdateJobService extends JobService {
                 try {
                     Context context = getApplicationContext();
                     JSONObject andObj = response.getJSONObject("Android");
-                    if (andObj.getString("Latest") != BuildConfig.VERSION_NAME) {
+                    Log.d(TAG, andObj.getString("Latest"));
+                    if (!andObj.getString("Latest").equals(BuildConfig.VERSION_NAME)) {
                         // down&install intent
                         Intent diintent = new Intent(context, UpdateService.class);
                         JSONArray mirrs = andObj.getJSONArray("Mirrors");
@@ -53,7 +70,7 @@ public class UpdateJobService extends JobService {
                         diintent.setAction(mirrs.getString(0));
                         Log.d(TAG, diintent.getStringExtra("io.geph.android.downURL"));
                         PendingIntent diPendingIntent = PendingIntent.getService(context, 0, diintent, 0);
-                        NotificationCompat.Builder mBuilder = new NotificationCompat.Builder(context);
+                        NotificationCompat.Builder mBuilder = new NotificationCompat.Builder(context, createNotificationChannel());
                         mBuilder.setSmallIcon(R.drawable.ic_stat_notification_icon)
                                 .setContentTitle(getString(R.string.update_notification))
                                 .setContentText(getString(R.string.download_and_install))

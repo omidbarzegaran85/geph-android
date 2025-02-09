@@ -2,7 +2,10 @@ package io.geph.android.tun2socks;
 
 import android.annotation.TargetApi;
 import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
 import android.app.PendingIntent;
+import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -14,7 +17,6 @@ import android.preference.PreferenceManager;
 import android.support.v4.app.NotificationCompat;
 import android.util.Log;
 
-import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
@@ -24,8 +26,6 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import io.geph.android.AccountUtils;
-import io.geph.android.Constants;
-import io.geph.android.FileUtils;
 import io.geph.android.MainActivity;
 import io.geph.android.R;
 
@@ -36,9 +36,15 @@ public class TunnelManager implements Tunnel.HostService {
     public static final String SOCKS_SERVER_ADDRESS_BASE = "socksServerAddress";
     public static final String SOCKS_SERVER_PORT_EXTRA = "socksServerPort";
     public static final String DNS_SERVER_PORT_EXTRA = "dnsServerPort";
+    public static final String USERNAME = "username";
+    public static final String PASSWORD = "password";
+    public static final String EXIT_NAME = "exitName";
+    public static final String EXIT_KEY = "exitKey";
+    public static final String USE_TCP = "useTCP";
+    public static final String FORCE_BRIDGES = "forceBridges";
+    public static final String BYPASS_CHINA = "bypassChina";
 
     private static final String LOG_TAG = "TunnelManager";
-    private static final String GEO_DB_FILE_NAME = "ip-mappings.csv";
     private static final String CACHE_DIR_NAME = "geph";
     private static final String DAEMON_IN_NATIVELIB_DIR = "libgeph.so";
     private TunnelVpnService m_parentService = null;
@@ -51,6 +57,13 @@ public class TunnelManager implements Tunnel.HostService {
     private String mSocksServerPort;
     private String mDnsServerPort;
     private String mDnsResolverAddress;
+    private String mUsername;
+    private String mPassword;
+    private String mExitName;
+    private String mExitKey;
+    private Boolean mUseTCP;
+    private Boolean mForceBridges;
+    private Boolean mBypassChina;
     private Process mSocksProxyDaemonProc;
     private AtomicBoolean m_isReconnecting;
 
@@ -61,34 +74,34 @@ public class TunnelManager implements Tunnel.HostService {
         m_tunnel = Tunnel.newTunnel(this);
     }
 
-    public boolean runSocksProxy() {
-        mSocksProxyDaemonProc = runSocksProxyDaemon();
-        return mSocksProxyDaemonProc != null;
-    }
-
-    public boolean stopSocksProxy() {
-        if (mSocksProxyDaemonProc != null) {
-            mSocksProxyDaemonProc.destroy();
-            mSocksProxyDaemonProc = null;
-        }
-        return true;
-    }
-
     // Implementation of android.app.Service.onStartCommand
     public int onStartCommand(Intent intent, int flags, int startId) {
-        Log.i(LOG_TAG, "onStartCommand");
-
-        if (setupAndRunSocksProxyDaemon() == null) {
-            Log.e(LOG_TAG, "Failed to start the socks proxy daemon.");
-            m_parentService.broadcastVpnStart(false /* success */);
+        if (intent == null) {
+            Log.i(LOG_TAG, "labooyah");
             return 0;
         }
+        Log.i(LOG_TAG, "onStartCommand");
 
         mSocksServerAddressBase = intent.getStringExtra(SOCKS_SERVER_ADDRESS_BASE);
         mSocksServerPort = intent.getStringExtra(SOCKS_SERVER_PORT_EXTRA);
         mSocksServerAddress = mSocksServerAddressBase + ":" + mSocksServerPort;
         mDnsServerPort = intent.getStringExtra(DNS_SERVER_PORT_EXTRA);
         mDnsResolverAddress = mSocksServerAddressBase + ":" + mDnsServerPort;
+        Log.i(LOG_TAG, "onStartCommand parsed some stuff");
+        mUsername = intent.getStringExtra(USERNAME);
+        mPassword = intent.getStringExtra(PASSWORD);
+        mExitKey = intent.getStringExtra(EXIT_KEY);
+        mExitName = intent.getStringExtra(EXIT_NAME);
+        mForceBridges = intent.getBooleanExtra(FORCE_BRIDGES, false);
+        mUseTCP = intent.getBooleanExtra(USE_TCP, false);
+        mBypassChina = intent.getBooleanExtra(BYPASS_CHINA, false);
+        Log.i(LOG_TAG, "onStartCommand parsed intent");
+
+        if (setupAndRunSocksProxyDaemon() == null) {
+            Log.e(LOG_TAG, "Failed to start the socks proxy daemon.");
+            m_parentService.broadcastVpnStart(false /* success */);
+            return 0;
+        }
 
         if (mSocksServerAddress == null) {
             Log.e(LOG_TAG, "Failed to receive the socks server address.");
@@ -114,7 +127,8 @@ public class TunnelManager implements Tunnel.HostService {
         PendingIntent pendingIntent = PendingIntent.getActivity(ctx, 0, notificationIntent, 0);
 
         Bitmap largeIcon = BitmapFactory.decodeResource(ctx.getResources(), R.mipmap.ic_launcher);
-        NotificationCompat.Builder builder = new NotificationCompat.Builder(ctx)
+        String channelId = createNotificationChannel();
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(ctx, createNotificationChannel())
                 .setSmallIcon(R.drawable.ic_stat_notification_icon)
                 .setLargeIcon(largeIcon)
                 .setWhen(System.currentTimeMillis())
@@ -127,7 +141,21 @@ public class TunnelManager implements Tunnel.HostService {
         // starting this service on foreground to avoid accidental GC by Android system
         getVpnService().startForeground(NOTIFICATION_ID, notification);
 
-        return android.app.Service.START_NOT_STICKY;
+        return Service.START_STICKY;
+    }
+
+    private String createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            String channelId = "geph_service";
+            String channelName = "Geph background service";
+            NotificationChannel chan = new NotificationChannel(channelId,
+                    channelName, NotificationManager.IMPORTANCE_NONE);
+            chan.setDescription("Geph background service");
+            NotificationManager notificationManager = getContext().getSystemService(NotificationManager.class);
+            notificationManager.createNotificationChannel(chan);
+            return channelId;
+        }
+        return "";
     }
 
     private Process setupAndRunSocksProxyDaemon() {
@@ -152,6 +180,9 @@ public class TunnelManager implements Tunnel.HostService {
                         break;
                     }
                 }
+                Log.e(tag, "stopping log stuff because the process died");
+                getVpnService().stopForeground(true);
+                System.exit(0);
             }
         });
         socksProxyDaemonErr.start();
@@ -164,47 +195,33 @@ public class TunnelManager implements Tunnel.HostService {
         final String daemonBinaryPath =
                 ctx.getApplicationInfo().nativeLibraryDir + "/" + DAEMON_IN_NATIVELIB_DIR;
 
-        final String socksProxyDaemonCacheDirName = CACHE_DIR_NAME;
-
         try {
-            File socksProxyCacheDir = new File(ctx.getCacheDir(), socksProxyDaemonCacheDirName);
-            if (!(socksProxyCacheDir.exists() && socksProxyCacheDir.isDirectory())) {
-                socksProxyCacheDir.delete();
-                socksProxyCacheDir.mkdir();
-            }
-
-            File geoDb = new File(ctx.getFilesDir().getAbsolutePath() + "/" + GEO_DB_FILE_NAME);
-            if (!geoDb.exists()) {
-                FileUtils.copyFile(GEO_DB_FILE_NAME, geoDb.getAbsolutePath(), ctx);
-            }
-
             List<String> commands = new ArrayList<>();
             commands.add(daemonBinaryPath);
-            commands.add("client");
-            commands.add("-powersave");
-            commands.add("-uname");
-            commands.add(AccountUtils.getUsername(getContext()));
-            commands.add("-pwd");
-            commands.add(AccountUtils.getPassword(getContext()));
-            commands.add("-geodb");
-            commands.add(geoDb.getAbsolutePath());
-
-            SharedPreferences spref = PreferenceManager.getDefaultSharedPreferences(getContext());
-            // conditionally enable whitelist option
-            if (spref.getBoolean(Constants.SETTINGS_WHITELIST, false)) {
-                commands.add("-whitelist");
-                commands.add("CN");
+            commands.add("-username");
+            commands.add(mUsername);
+            commands.add("-password");
+            commands.add(mPassword);
+            commands.add("-exitName");
+            commands.add(mExitName);
+            commands.add("-exitKey");
+            commands.add(mExitKey);
+            commands.add("-fakeDNS=true");
+            commands.add("-dnsAddr=127.0.0.1:49983");
+            if (mUseTCP) {
+                commands.add("-useTCP=true");
             }
-            // conditionally enable cache option
-            if (spref.getBoolean(Constants.SETTINGS_CACHE, true)) {
-                commands.add("-cachedir");
-                commands.add(socksProxyCacheDir.getAbsolutePath());
+            if (mForceBridges) {
+                commands.add("-forceBridges=true");
             }
-
+            if (mBypassChina) {
+                commands.add("-bypassChinese=true");
+            }
+            Log.i(LOG_TAG, commands.toString());
             ProcessBuilder pb = new ProcessBuilder(commands);
 
             return pb.start();
-        } catch (IOException e) {
+        } catch (Exception e) {
             e.printStackTrace();
         }
         return null;

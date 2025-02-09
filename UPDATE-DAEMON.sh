@@ -1,17 +1,21 @@
 #!/bin/sh
 
-if [ "$#" -ne 1 ]; then
-  echo "Usage: $0 <version>" >&2
-  exit 1
-fi
+export PREFIX="https://binaries.geph.io"
+export VERSION="v0.18.14"
 
 PREBUILD="./prebuild"
 # ABI names must match with arguments provided to android.defaultConfig.ndk.abiFilters
-ARM_DIR=$PREBUILD"/armeabi"
+ARM_DIR=$PREBUILD"/armeabi-v7a"
+ARM64_DIR=$PREBUILD"/arm64-v8a"
 X86_DIR=$PREBUILD"/x86"
+X86_64_DIR=$PREBUILD"/x86_64"
 TARGET="libgeph.so"
 
 mkdir -p $ARM_DIR
 mkdir -p $X86_DIR
-curl https://dl.geph.io/XGO_BUILD/geph-$1-android-16-arm > $ARM_DIR/$TARGET
-curl https://dl.geph.io/XGO_BUILD/geph-$1-android-16-386 > $X86_DIR/$TARGET
+mkdir -p $ARM64_DIR
+mkdir -p $X86_64_DIR
+curl "$PREFIX/geph-client-linux-armeabi-$VERSION" > $ARM_DIR/$TARGET
+curl "$PREFIX/geph-client-linux-arm64-$VERSION" > $ARM64_DIR/$TARGET
+curl "$PREFIX/geph-client-linux-i386-$VERSION" > $X86_DIR/$TARGET
+curl "$PREFIX/geph-client-linux-amd64-$VERSION" > $X86_64_DIR/$TARGET
